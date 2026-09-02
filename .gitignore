@@ -1,0 +1,36 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Uploaded audio/video files
+uploads/*
+processed_audio/*
+
+# Generated output
+transcripts/*
+summaries/*
+
+# Keep folder structure
+!uploads/.gitkeep
+!processed_audio/.gitkeep
+!transcripts/.gitkeep
+!summaries/.gitkeep
+
+# Environment variables
+.env
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
