@@ -36,3 +36,4 @@ Thumbs.db
 *.log
 # SQLite database files
 *.db
+vector_database/

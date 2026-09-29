@@ -89,3 +89,90 @@ Streamlit Web Interface
         |
         v
 Meeting Intelligence
+
+---
+
+## Milestone 3 – Meeting Knowledge & RAG
+
+Milestone 3 extends MeetIQ with a knowledge retrieval system that allows
+users to ask questions about previously processed meetings using semantic
+search and Retrieval-Augmented Generation (RAG).
+
+### Features
+
+- Meeting knowledge repository
+- Text embedding generation
+- Vector database integration
+- Semantic similarity search
+- Retrieval-Augmented Generation (RAG)
+- Grounded question answering
+- Meeting source identification
+- FastAPI RAG endpoint
+- Streamlit Knowledge Search interface
+- Context-based answer generation
+- Protection against unsupported information
+
+### Milestone 3 Pipeline
+
+Previously Processed Meetings
+        |
+        v
+Knowledge Repository
+        |
+        v
+Text Embedding
+        |
+        v
+Vector Database
+        |
+        v
+Semantic Search
+        |
+        v
+Relevant Meeting Context
+        |
+        v
+LLM
+        |
+        v
+Grounded Answer + Sources
+
+### Knowledge Search
+
+Users can enter natural-language questions about previously processed
+meetings through the Knowledge Search interface.
+
+The system:
+
+1. Converts the question into an embedding.
+2. Searches the vector database for relevant meeting information.
+3. Retrieves the most relevant meeting context.
+4. Sends the retrieved context to the LLM.
+5. Generates a grounded answer using only the retrieved information.
+6. Displays the answer along with the relevant meeting sources.
+
+### Example
+
+Question:
+
+"Which meeting discussed database migration?"
+
+Result:
+
+"Meeting ID: 1 discussed database migration."
+
+The system also displays the meeting ID and retrieved information as the
+source of the answer.
+
+### RAG API
+
+The system provides a FastAPI endpoint:
+
+`POST /rag-question`
+
+Example request:
+
+```json
+{
+  "question": "Which meeting discussed database migration?"
+}
