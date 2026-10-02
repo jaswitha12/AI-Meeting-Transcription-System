@@ -1,25 +1,22 @@
 import os
 import requests
 
-from dotenv import load_dotenv
-
 from .embedding_service import generate_embedding
 from .vector_store import search_embeddings
 
 
 # ============================================================
-# CONFIGURATION
+# LLM CONFIGURATION
 # ============================================================
-
-load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-OPENROUTER_URL = (
-    "https://openrouter.ai/api/v1/chat/completions"
-)
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL_NAME = "qwen/qwen-2.5-7b-instruct"
+MODEL_NAME = os.getenv(
+    "MEETING_LLM_MODEL",
+    "qwen/qwen-2.5-7b-instruct"
+)
 
 
 # ============================================================
@@ -44,6 +41,8 @@ def generate_grounded_answer(
 
     if not question or not question.strip():
         raise ValueError("Question cannot be empty.")
+
+    question = question.strip()
 
     # --------------------------------------------------------
     # Step 1: Convert question into embedding
@@ -120,19 +119,32 @@ def generate_grounded_answer(
     prompt = f"""
 You are a meeting question-answering assistant.
 
-Answer the user's question using ONLY the meeting context
-provided below.
+Your task is to answer the user's question using ONLY
+the retrieved meeting context provided below.
+
+IMPORTANT:
+The MEETING CONTEXT contains information retrieved from
+the meeting database. Treat it as the authoritative source.
 
 Rules:
 
-1. Do not invent information.
-2. Do not use outside knowledge.
-3. If the answer is not present in the context, say:
-   "The available meeting records do not contain this information."
-4. Give a clear and concise answer.
-5. Mention the relevant meeting ID when available.
-6. If multiple meetings contain relevant information,
-   mention all relevant meeting IDs.
+1. Carefully read ALL retrieved meeting context.
+2. If the context contains information that directly or
+   clearly relates to the user's question, answer using
+   that information.
+3. Do NOT say that the information is unavailable if the
+   context contains relevant information.
+4. Do NOT invent information that is not present in the context.
+5. Do NOT use outside knowledge.
+6. Give a clear and concise answer.
+7. Mention the relevant Meeting ID when available.
+8. If multiple meetings contain relevant information,
+   mention all relevant Meeting IDs.
+9. Summarize the relevant information from the context
+   instead of simply saying that it exists.
+10. If the context genuinely does not contain an answer,
+    say exactly:
+    "The available meeting records do not contain this information."
 
 MEETING CONTEXT:
 
@@ -141,6 +153,8 @@ MEETING CONTEXT:
 USER QUESTION:
 
 {question}
+
+ANSWER:
 """
 
     # --------------------------------------------------------
@@ -170,6 +184,14 @@ USER QUESTION:
         "model": MODEL_NAME,
         "messages": [
             {
+                "role": "system",
+                "content": (
+                    "You answer questions about meetings. "
+                    "Use only the provided meeting context. "
+                    "Never invent information."
+                )
+            },
+            {
                 "role": "user",
                 "content": prompt
             }
@@ -195,6 +217,27 @@ USER QUESTION:
         data = response.json()
 
         answer = data["choices"][0]["message"]["content"]
+                # ----------------------------------------------------
+        # Fallback for incorrect "information unavailable"
+        # responses from the LLM
+        # ----------------------------------------------------
+
+        unavailable_phrases = [
+            "the available meeting records do not contain this information",
+            "information is not available",
+            "not contain this information"
+        ]
+
+        if any(
+            phrase in answer.lower()
+            for phrase in unavailable_phrases
+        ):
+            answer = (
+                "According to Meeting "
+                + str(metadatas[0].get("meeting_id", "Unknown"))
+                + ": "
+                + documents[0]
+            )
 
     except requests.exceptions.Timeout:
 

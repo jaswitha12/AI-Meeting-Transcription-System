@@ -37,3 +37,16 @@ Thumbs.db
 # SQLite database files
 *.db
 vector_database/
+
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Python virtual environments
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]

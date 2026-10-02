@@ -47,7 +47,29 @@ def initialize_database():
 
     connection = get_connection()
     cursor = connection.cursor()
+    # --------------------------------------------------------
+    # ZOOM RECORDINGS
+    # --------------------------------------------------------
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS zoom_recordings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            zoom_recording_id TEXT NOT NULL UNIQUE,
+            meeting_id INTEGER,
+            topic TEXT,
+            recording_start TEXT,
+            download_url TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            created_at VARCHAR(50),
+            processed_at VARCHAR(50),
+            FOREIGN KEY (meeting_id)
+                REFERENCES meetings(id)
+                ON DELETE SET NULL
+        )
+        """
+    )
     # --------------------------------------------------------
     # MEETINGS
     # --------------------------------------------------------

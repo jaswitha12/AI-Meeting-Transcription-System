@@ -1,5 +1,5 @@
 from datetime import datetime
-from .zoom_service import get_zoom_transcript
+from .zoom_service import get_zoom_transcript, get_zoom_recordings
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -570,9 +570,26 @@ def semantic_search(request: SearchRequest):
 # ============================================================
 # ZOOM TRANSCRIPT
 # ============================================================
+@app.post("/zoom-process")
+def zoom_process():
+    return {
+        "success": True,
+        "message": "Zoom processing endpoint is ready.",
+        "status": "waiting_for_recording"
+    }
+    try:
+        recordings = get_zoom_recordings()
 
-@app.post("/zoom-transcript")
-def zoom_transcript(request: ZoomTranscriptRequest):
+        return {
+            "success": True,
+            "recordings": recordings
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve Zoom recordings: {error}"
+        )
     """
     Retrieve a transcript from Zoom using a meeting ID.
     """

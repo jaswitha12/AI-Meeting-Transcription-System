@@ -1,10 +1,8 @@
 import os
 import requests
-API_BASE_URL = "http://127.0.0.1:8000"
 import streamlit as st
 import whisper
 from backend.database import get_meeting_history, get_full_meeting
-from backend.rag_service import generate_grounded_answer
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -253,7 +251,8 @@ with st.sidebar:
     "🔥 Priorities",
     "🎯 Transcription Accuracy Testing",
     "📚 Meeting History",
-    "🔎 Knowledge Search"
+    "🔎 Knowledge Search",
+    "🎥 Zoom Integration"
 ]
 
     selected_page = st.radio(
@@ -356,6 +355,12 @@ if selected_page == "🏠 Dashboard":
     # --------------------------------------------------------
     # CALCULATE DASHBOARD METRICS
     # --------------------------------------------------------
+    #
+    # get_meeting_history() returns summary/history records.
+    # The detailed action items, decisions and participants are
+    # loaded from get_full_meeting() so the dashboard shows the
+    # real stored values instead of always displaying zero.
+    # --------------------------------------------------------
 
     total_meetings = len(meetings)
 
@@ -365,29 +370,48 @@ if selected_page == "🏠 Dashboard":
 
     for meeting in meetings:
 
-        action_items = meeting.get(
-            "action_items",
-            []
-        )
+        meeting_id = meeting.get("id")
 
-        decisions = meeting.get(
-            "decisions",
-            []
-        )
+        if not meeting_id:
+            continue
 
-        participants = meeting.get(
-            "participants",
-            []
-        )
+        try:
 
-        if isinstance(action_items, list):
-            total_action_items += len(action_items)
+            full_meeting = get_full_meeting(
+                int(meeting_id)
+            )
 
-        if isinstance(decisions, list):
-            total_decisions += len(decisions)
+            if not full_meeting:
+                continue
 
-        if isinstance(participants, list):
-            total_participants += len(participants)
+            action_items = full_meeting.get(
+                "action_items",
+                []
+            )
+
+            decisions = full_meeting.get(
+                "decisions",
+                []
+            )
+
+            participants = full_meeting.get(
+                "participants",
+                []
+            )
+
+            if isinstance(action_items, list):
+                total_action_items += len(action_items)
+
+            if isinstance(decisions, list):
+                total_decisions += len(decisions)
+
+            if isinstance(participants, list):
+                total_participants += len(participants)
+
+        except Exception:
+            # One damaged/missing meeting should not break
+            # the entire dashboard.
+            continue
 
     # --------------------------------------------------------
     # SUMMARY CARDS
@@ -2857,10 +2881,12 @@ elif selected_page == "🔎 Knowledge Search":
 
                                         if meeting:
 
-                                            meeting_date = meeting.get(
-                                                "created_at",
-                                                "Unknown"
-                                            )
+                                           meeting_date = (
+    meeting.get("created_at")
+    or meeting.get("date")
+    or meeting.get("meeting_date")
+    or "Date unavailable"
+)
 
                                 except Exception:
 
@@ -2945,67 +2971,146 @@ elif selected_page == "🔎 Knowledge Search":
                         f"❌ Unexpected error: {error}"
                     )
 # ============================================================
-# ZOOM INTEGRATION
+# 10. ZOOM INTEGRATION
 # ============================================================
 
-st.markdown("---")
-st.subheader("🎥 Zoom Integration")
+elif selected_page == "🎥 Zoom Integration":
 
-zoom_meeting_id = st.text_input(
-    "Zoom Meeting ID",
-    placeholder="Enter your Zoom Meeting ID"
-)
+    st.header("🎥 Zoom Integration")
 
-if st.button("Get Zoom Transcript"):
-    if not zoom_meeting_id.strip():
-        st.warning("Please enter a Zoom Meeting ID.")
-    else:
-        try:
-            response = requests.post(
-                f"{API_BASE_URL}/zoom-transcript",
-                json={
-                    "meeting_id": zoom_meeting_id.strip()
-                },
-                timeout=60
+    st.write(
+        "Retrieve a transcript from Zoom using a valid Zoom "
+        "meeting ID."
+    )
+
+    st.info(
+        "ℹ️ Your Zoom Server-to-Server OAuth app must have the "
+        "required transcript permission. A real Zoom meeting ID "
+        "with an available transcript is required."
+    )
+
+    zoom_meeting_id = st.text_input(
+        "Zoom Meeting ID",
+        placeholder="Enter your Zoom Meeting ID",
+        key="zoom_meeting_id"
+    )
+
+    if st.button(
+        "🎥 Get Zoom Transcript",
+        type="primary",
+        use_container_width=True,
+        key="zoom_transcript_button"
+    ):
+
+        if not zoom_meeting_id.strip():
+
+            st.warning(
+                "⚠️ Please enter a Zoom Meeting ID."
             )
 
-            if response.status_code == 200:
-                result = response.json()
+        elif not backend_available:
 
-                st.success("✅ Zoom transcript retrieved successfully.")
+            st.error(
+                "❌ AI backend is not available."
+            )
 
-                st.subheader("Transcript")
+        else:
 
-                st.text_area(
-                    "Zoom Transcript",
-                    value=str(result.get("transcript", "")),
-                    height=400
-                )
+            try:
 
-            else:
-                try:
-                    error_detail = response.json().get(
-                        "detail",
-                        "Unknown error"
+                with st.spinner(
+                    "🔄 Retrieving Zoom transcript..."
+                ):
+
+                    response = requests.post(
+                        f"{BACKEND_URL}/zoom-transcript",
+                        json={
+                            "meeting_id":
+                                zoom_meeting_id.strip()
+                        },
+                        timeout=60
                     )
-                except Exception:
-                    error_detail = response.text
+
+                if response.status_code == 200:
+
+                    result = response.json()
+
+                    st.success(
+                        "✅ Zoom transcript retrieved successfully."
+                    )
+
+                    transcript_data = result.get(
+                        "transcript",
+                        ""
+                    )
+
+                    st.subheader("📄 Zoom Transcript")
+
+                    if isinstance(
+                        transcript_data,
+                        dict
+                    ):
+
+                        st.json(
+                            transcript_data
+                        )
+
+                    elif transcript_data:
+
+                        st.text_area(
+                            "Transcript",
+                            value=str(
+                                transcript_data
+                            ),
+                            height=400
+                        )
+
+                    else:
+
+                        st.info(
+                            "The Zoom API returned no transcript "
+                            "content."
+                        )
+
+                else:
+
+                    try:
+
+                        error_detail = response.json().get(
+                            "detail",
+                            "Unknown Zoom API error."
+                        )
+
+                    except Exception:
+
+                        error_detail = response.text
+
+                    st.error(
+                        f"❌ Zoom request failed: "
+                        f"{error_detail}"
+                    )
+
+            except requests.exceptions.Timeout:
 
                 st.error(
-                    f"❌ Zoom request failed: {error_detail}"
+                    "⏱️ Zoom request timed out. "
+                    "Please try again."
                 )
 
-        except requests.exceptions.ConnectionError:
-            st.error(
-                "❌ Could not connect to the AI backend."
-            )
+            except requests.exceptions.ConnectionError:
 
-        except requests.exceptions.RequestException as error:
-            st.error(
-                f"❌ Zoom request failed: {error}"
-            )
+                st.error(
+                    "🔌 Could not connect to the MeetIQ backend."
+                )
 
-        except Exception as error:
-            st.error(
-                f"❌ Unexpected error: {error}"
-            )
+            except requests.exceptions.RequestException as error:
+
+                st.error(
+                    f"❌ Zoom request failed: {error}"
+                )
+
+            except Exception as error:
+
+                st.error(
+                    f"❌ Unexpected error: {error}"
+                )

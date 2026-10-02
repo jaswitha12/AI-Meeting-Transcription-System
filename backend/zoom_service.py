@@ -70,7 +70,7 @@ def get_zoom_transcript(meeting_id: str):
     access_token = get_zoom_access_token()
 
     response = requests.get(
-        f"https://api.zoom.us/v2/meetings/{meeting_id}/transcript",
+        f"https://api.zoom.us/v2/accounts/{os.getenv('ZOOM_ACCOUNT_ID')}/recordings",
         headers={
             "Authorization": f"Bearer {access_token}"
         },
@@ -80,3 +80,37 @@ def get_zoom_transcript(meeting_id: str):
     response.raise_for_status()
 
     return response.json()
+def get_zoom_recordings():
+    access_token = get_zoom_access_token()
+
+    response = requests.get(
+        "https://api.zoom.us/v2/users/me/recordings",
+        headers={
+            "Authorization": f"Bearer {access_token}"
+        },
+        timeout=30,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+def download_zoom_recording(download_url: str, output_path: str):
+    access_token = get_zoom_access_token()
+
+    response = requests.get(
+        download_url,
+        headers={
+            "Authorization": f"Bearer {access_token}"
+        },
+        stream=True,
+        timeout=60,
+    )
+
+    response.raise_for_status()
+
+    with open(output_path, "wb") as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                file.write(chunk)
+
+    return output_path
