@@ -199,12 +199,12 @@ ANSWER:
         "temperature": 0.1
     }
 
+    
     # --------------------------------------------------------
     # Step 7: Call LLM with error handling
     # --------------------------------------------------------
 
     try:
-
         response = requests.post(
             OPENROUTER_URL,
             headers=headers,
@@ -217,10 +217,16 @@ ANSWER:
         data = response.json()
 
         answer = data["choices"][0]["message"]["content"]
-                # ----------------------------------------------------
-        # Fallback for incorrect "information unavailable"
-        # responses from the LLM
+
         # ----------------------------------------------------
+        # Handle empty or unavailable answers safely
+        # ----------------------------------------------------
+
+        if not answer or not answer.strip():
+            answer = (
+                "The available meeting records do not contain "
+                "a reliable answer to this question."
+            )
 
         unavailable_phrases = [
             "the available meeting records do not contain this information",
@@ -233,14 +239,11 @@ ANSWER:
             for phrase in unavailable_phrases
         ):
             answer = (
-                "According to Meeting "
-                + str(metadatas[0].get("meeting_id", "Unknown"))
-                + ": "
-                + documents[0]
+                "The available meeting records do not contain "
+                "a reliable answer to this question."
             )
 
     except requests.exceptions.Timeout:
-
         return {
             "question": question,
             "answer": (
@@ -251,7 +254,6 @@ ANSWER:
         }
 
     except requests.exceptions.RequestException as error:
-
         return {
             "question": question,
             "answer": (
@@ -261,7 +263,6 @@ ANSWER:
         }
 
     except (KeyError, IndexError, TypeError, ValueError):
-
         return {
             "question": question,
             "answer": "The LLM returned an invalid response.",
@@ -269,7 +270,6 @@ ANSWER:
         }
 
     except Exception as error:
-
         return {
             "question": question,
             "answer": (

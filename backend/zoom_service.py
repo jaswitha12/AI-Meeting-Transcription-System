@@ -64,13 +64,13 @@ def get_zoom_meetings():
     response.raise_for_status()
 
     return response.json()
-def get_zoom_transcript(meeting_id: str):
-    """Get the transcript of a Zoom meeting."""
 
+def get_zoom_transcript(meeting_id: str):
+    """Get recording metadata for a specific Zoom meeting."""
     access_token = get_zoom_access_token()
 
     response = requests.get(
-        f"https://api.zoom.us/v2/accounts/{os.getenv('ZOOM_ACCOUNT_ID')}/recordings",
+        f"https://api.zoom.us/v2/meetings/{meeting_id}/recordings",
         headers={
             "Authorization": f"Bearer {access_token}"
         },
@@ -78,8 +78,20 @@ def get_zoom_transcript(meeting_id: str):
     )
 
     response.raise_for_status()
+    data = response.json()
 
-    return response.json()
+    # Return only transcript-related recording files.
+    transcript_files = [
+        recording
+        for recording in data.get("recording_files", [])
+        if recording.get("file_type") == "TRANSCRIPT"
+        or recording.get("file_extension", "").upper() == "VTT"
+    ]
+
+    return {
+        "meeting_id": meeting_id,
+        "transcript_files": transcript_files,
+    }
 def get_zoom_recordings():
     access_token = get_zoom_access_token()
 

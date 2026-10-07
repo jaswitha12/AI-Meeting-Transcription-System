@@ -187,9 +187,11 @@ def normalize_llm_result(result: dict) -> dict:
     seen_names = set()
 
     for participant in normalized_participants:
-
-        name_key = participant["name"].lower()
-
+        name_key = str(
+        participant.get("name") or ""
+    ).strip().lower()
+        if not name_key or name_key in ("null", "none", "unknown"):
+            continue
         if name_key in seen_names:
             continue
 
@@ -281,35 +283,20 @@ def normalize_llm_result(result: dict) -> dict:
             ).strip()
 
 
+        
         # ----------------------------------------------------
         # Priority
         # ----------------------------------------------------
+        priority = action.get("priority")
 
-        priority = action.get(
-            "priority"
-        )
+        if isinstance(priority, list):
+            priority = priority[0] if priority else None
 
-        if isinstance(
-            priority,
-            list
-        ):
+        if priority is not None:
+            priority = str(priority).strip().capitalize()
 
-            if priority:
-
-                priority = str(
-                    priority[0]
-                ).strip()
-
-            else:
-
-                priority = None
-
-        elif priority is not None:
-
-            priority = str(
-                priority
-            ).strip()
-
+        if priority not in ("High", "Medium", "Low"):
+            priority = "Medium"
 
         # ----------------------------------------------------
         # Status

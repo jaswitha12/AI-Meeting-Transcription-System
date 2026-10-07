@@ -1,3 +1,4 @@
+
 import chromadb
 from pathlib import Path
 
@@ -30,19 +31,27 @@ def add_embedding(
     content_type: str
 ):
     """
-    Add or update a meeting knowledge embedding
-    in the ChromaDB vector database.
+    Add or update meeting knowledge in ChromaDB.
     """
 
     try:
+        if not record_id:
+            raise ValueError("Record ID cannot be empty.")
+
+        if not text or not text.strip():
+            raise ValueError("Document text cannot be empty.")
+
+        if not embedding:
+            raise ValueError("Embedding cannot be empty.")
+
         collection.upsert(
             ids=[record_id],
             embeddings=[embedding],
             documents=[text],
             metadatas=[
                 {
-                    "meeting_id": meeting_id,
-                    "content_type": content_type
+                    "meeting_id": int(meeting_id),
+                    "content_type": str(content_type)
                 }
             ]
         )
@@ -63,24 +72,52 @@ def search_embeddings(
     top_k: int = 5
 ):
     """
-    Hybrid meeting search.
+    Search meeting records using keyword matching
+    and semantic similarity.
 
-    For multi-word queries:
-    - First checks meaningful phrase matches.
-    - Uses semantic similarity only as a fallback.
+    Keyword matches receive higher ranking.
+    Semantic similarity is used to find related information
+    even when the exact query words are absent.
 
-    For single-word queries:
-    - Uses semantic similarity and keyword matching.
+    Returns a ChromaDB-compatible result structure.
     """
 
     try:
         # ----------------------------------------------------
-        # Get a large candidate set
+        # 1. Validate input
+        # ----------------------------------------------------
+
+        if not query_text or not query_text.strip():
+            raise ValueError("Search query cannot be empty.")
+
+        if not query_embedding:
+            raise ValueError("Query embedding cannot be empty.")
+
+        if not isinstance(top_k, int) or top_k < 1:
+            raise ValueError("top_k must be a positive integer.")
+
+        query = query_text.lower().strip()
+
+        # ----------------------------------------------------
+        # 2. Handle an empty vector database
+        # ----------------------------------------------------
+
+        collection_count = collection.count()
+
+        if collection_count == 0:
+            return {
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]]
+            }
+
+        # ----------------------------------------------------
+        # 3. Retrieve candidate records
         # ----------------------------------------------------
 
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(collection.count(), 50),
+            n_results=min(collection_count, 50),
             include=[
                 "documents",
                 "metadatas",
@@ -88,178 +125,113 @@ def search_embeddings(
             ]
         )
 
-        # ----------------------------------------------------
-        # Handle empty database
-        # ----------------------------------------------------
+        documents = results.get("documents", [[]])[0] or []
+        metadatas = results.get("metadatas", [[]])[0] or []
+        distances = results.get("distances", [[]])[0] or []
 
-        if (
-            not results.get("documents")
-            or not results["documents"][0]
-        ):
+        if not documents:
             return {
                 "documents": [[]],
                 "metadatas": [[]],
                 "distances": [[]]
             }
 
-        documents = results["documents"][0]
-        metadatas = results["metadatas"][0]
-        distances = results["distances"][0]
-
-        query = query_text.lower().strip()
-
         # ----------------------------------------------------
-        # Clean query words
+        # 4. Prepare meaningful query keywords
         # ----------------------------------------------------
+
+        stop_words = {
+            "what", "are", "the", "is", "in", "on", "of",
+            "to", "a", "an", "and", "for", "from", "with",
+            "were", "was", "discussed", "about", "please",
+            "tell", "me", "show", "find", "which", "main",
+            "topics", "meetings", "meeting", "give", "explain",
+            "summarize", "summary", "made", "does", "did",
+            "can", "could", "would", "should", "this", "that"
+        }
 
         query_words = [
-            word.strip(".,!?;:")
+            word.strip(".,!?;:()'\"").lower()
             for word in query.split()
-            if len(word.strip(".,!?;:")) >= 3
+            if len(word.strip(".,!?;:()'\"")) >= 3
+            and word.strip(".,!?;:()'\"").lower()
+            not in stop_words
         ]
 
         # ----------------------------------------------------
-        # Build meaningful phrases
+        # 5. Rank documents using keyword and semantic scores
         # ----------------------------------------------------
 
-        phrases = []
-
-        if len(query_words) >= 2:
-
-            # Full query
-            phrases.append(
-                " ".join(query_words)
-            )
-
-            # Last two words
-            phrases.append(
-                " ".join(query_words[-2:])
-            )
-
-            # First two words
-            phrases.append(
-                " ".join(query_words[:2])
-            )
-
-        # Remove duplicate phrases
-        phrases = list(dict.fromkeys(phrases))
-
-        # ----------------------------------------------------
-        # Store phrase matches separately
-        # ----------------------------------------------------
-
-        phrase_results = []
-
-        semantic_results = []
+        selected_results = []
 
         for document, metadata, distance in zip(
             documents,
             metadatas,
             distances
         ):
+            if not document:
+                continue
 
             document_lower = document.lower()
+            metadata = metadata or {}
 
-            # ------------------------------------------------
-            # Check meaningful phrase match
-            # ------------------------------------------------
-
-            phrase_match = any(
-                phrase in document_lower
-                for phrase in phrases
+            # Count meaningful query words found in the document.
+            matching_words = sum(
+                1
+                for word in query_words
+                if word in document_lower
             )
 
-            if phrase_match:
-                phrase_results.append(
-                    (
-                        document,
-                        metadata,
-                        distance
-                    )
-                )
+            # Exact phrase match provides additional relevance.
+            phrase_match = (
+                len(query_words) > 1
+                and " ".join(query_words) in document_lower
+            )
 
-            # ------------------------------------------------
-            # Store strong semantic results
-            # ------------------------------------------------
-
-            if distance <= 0.80:
-                semantic_results.append(
-                    (
-                        document,
-                        metadata,
-                        distance
-                    )
+            # Keep direct keyword matches or close semantic matches.
+            if matching_words > 0 or distance <= 0.65:
+                selected_results.append(
+                    {
+                        "document": document,
+                        "metadata": metadata,
+                        "distance": distance,
+                        "matching_words": matching_words,
+                        "phrase_match": phrase_match
+                    }
                 )
 
         # ----------------------------------------------------
-        # For multi-word queries:
-        # prefer actual phrase matches
+        # 6. Sort by relevance
         # ----------------------------------------------------
 
-        if len(query_words) >= 2:
-
-            selected_results = phrase_results
-
-            # If there are no phrase matches,
-            # use only very strong semantic matches.
-            if not selected_results:
-                selected_results = semantic_results
-
-        else:
-
-            # ------------------------------------------------
-            # Single-word query
-            # ------------------------------------------------
-
-            selected_results = []
-
-            for document, metadata, distance in zip(
-                documents,
-                metadatas,
-                distances
-            ):
-
-                document_lower = document.lower()
-
-                if (
-                    query in document_lower
-                    or distance <= 0.80
-                ):
-                    selected_results.append(
-                        (
-                            document,
-                            metadata,
-                            distance
-                        )
-                    )
-
-        # ----------------------------------------------------
-        # Limit final results
-        # ----------------------------------------------------
+        selected_results.sort(
+            key=lambda item: (
+                -int(item["phrase_match"]),
+                -item["matching_words"],
+                item["distance"]
+            )
+        )
 
         selected_results = selected_results[:top_k]
 
         # ----------------------------------------------------
-        # Prepare response
+        # 7. Prepare response
         # ----------------------------------------------------
 
-        filtered_documents = []
-        filtered_metadatas = []
-        filtered_distances = []
+        filtered_documents = [
+            item["document"]
+            for item in selected_results
+        ]
 
-        for document, metadata, distance in selected_results:
+        filtered_metadatas = [
+            item["metadata"]
+            for item in selected_results
+        ]
 
-            filtered_documents.append(
-                document
-            )
-
-            filtered_metadatas.append(
-                metadata
-            )
-
-            filtered_distances.append(
-                distance
-            )
+        filtered_distances = [
+            item["distance"]
+            for item in selected_results
+        ]
 
         return {
             "documents": [filtered_documents],
@@ -268,7 +240,6 @@ def search_embeddings(
         }
 
     except Exception as error:
-
         raise RuntimeError(
             f"Vector database search failed: {error}"
         ) from error

@@ -1,8 +1,15 @@
 import os
 import requests
 import streamlit as st
+from sympy import python
 import whisper
-from backend.database import get_meeting_history, get_full_meeting
+from backend.database import (
+    get_meeting_history,
+    get_full_meeting,
+    save_meeting
+)
+from backend.processing import process_transcript
+from backend.llm_service import analyze_meeting
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -144,6 +151,198 @@ def backend_is_available():
 
 backend_available = backend_is_available()
 
+
+
+
+# ============================================================
+# LOGIN AND REGISTRATION
+# ============================================================
+
+if "access_token" not in st.session_state:
+    st.session_state["access_token"] = None
+
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = None
+
+# ============================================================
+# LOGIN PAGE STYLING
+# ============================================================
+
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(135deg, #F3F6FF, #EAF0FF, #FFFFFF);
+    color: #263451;
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+[data-testid="stMainBlockContainer"] {
+    max-width: 1050px;
+    padding-top: 3rem;
+}
+
+h1, h2, h3, p, label {
+    color: #263451;
+}
+
+div[data-baseweb="input"] {
+    background: #FFFFFF;
+    border: 1px solid #D5DFF5;
+    border-radius: 10px;
+}
+
+div[data-baseweb="input"] input {
+    color: #263451;
+}
+
+div[data-testid="stForm"] {
+    background: #FFFFFF;
+    border: 1px solid #DCE4F7;
+    border-radius: 16px;
+    padding: 1.3rem;
+    box-shadow: 0 8px 28px rgba(75, 102, 170, 0.08);
+}
+
+div[data-testid="stFormSubmitButton"] button {
+    background: #5278E8;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 10px;
+    min-height: 44px;
+    font-weight: 600;
+}
+
+div[data-testid="stFormSubmitButton"] button:hover {
+    background: #3E63D1;
+    color: #FFFFFF;
+}
+
+button[data-baseweb="tab"] {
+    color: #52658C;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #365FC9;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# LOGIN FORM
+# ============================================================
+
+if not st.session_state["access_token"]:
+
+    st.title("🎙️ MeetIQ")
+    st.subheader("Welcome to your meeting intelligence workspace")
+    st.write("Log in to continue or create a new account.")
+
+    if not backend_available:
+        st.error("Backend is offline. Start FastAPI and try again.")
+        st.stop()
+
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+
+    # ---------------- LOGIN ----------------
+
+    with login_tab:
+        with st.form("login_form"):
+            login_email = st.text_input(
+                "Email",
+                key="login_email",
+            )
+            login_password = st.text_input(
+                "Password",
+                type="password",
+                key="login_password",
+            )
+            login_submitted = st.form_submit_button(
+                "Log in",
+                use_container_width=True,
+            )
+
+        if login_submitted:
+            try:
+                response = requests.post(
+                    f"{BACKEND_URL}/auth/login",
+                    json={
+                        "email": login_email,
+                        "password": login_password,
+                    },
+                    timeout=15,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+
+                    st.session_state["access_token"] = (
+                        result["access_token"]
+                    )
+                    st.session_state["user_email"] = (
+                        result["user"]["email"]
+                    )
+
+                    st.rerun()
+
+                else:
+                    st.error(
+                        response.json().get(
+                            "detail",
+                            "Login failed.",
+                        )
+                    )
+
+            except requests.exceptions.RequestException:
+                st.error("Could not connect to the backend.")
+
+    # ---------------- REGISTRATION ----------------
+
+    with register_tab:
+        with st.form("register_form"):
+            register_email = st.text_input(
+                "Email address",
+                key="register_email",
+            )
+            register_password = st.text_input(
+                "Password (minimum 8 characters)",
+                type="password",
+                key="register_password",
+            )
+            register_submitted = st.form_submit_button(
+                "Create account",
+                use_container_width=True,
+            )
+
+        if register_submitted:
+            try:
+                response = requests.post(
+                    f"{BACKEND_URL}/auth/register",
+                    json={
+                        "email": register_email,
+                        "password": register_password,
+                    },
+                    timeout=15,
+                )
+
+                if response.status_code == 200:
+                    st.success(
+                        "Account created. Select Login to continue."
+                    )
+                else:
+                    st.error(
+                        response.json().get(
+                            "detail",
+                            "Registration failed.",
+                        )
+                    )
+
+            except requests.exceptions.RequestException:
+                st.error("Could not connect to the backend.")
+
+    st.stop()
 
 
 # ============================================================
@@ -323,84 +522,86 @@ st.markdown(
 
 st.divider()
 
+
 # ============================================================
-# 0. DASHBOARD
+# 0. PROFESSIONAL DASHBOARD
 # ============================================================
 
 if selected_page == "🏠 Dashboard":
 
-    st.header("🏠 Dashboard")
+    # -------------------- CUSTOM DASHBOARD STYLE --------------------
+    st.markdown("""
+    <style>
+    .dashboard-banner {
+        padding: 28px;
+        border-radius: 16px;
+        background: linear-gradient(120deg, #152347, #3949AB);
+        color: white;
+        margin-bottom: 24px;
+    }
+    .dashboard-banner h1 {
+        color: white;
+        margin-bottom: 8px;
+        font-size: 32px;
+    }
+    .dashboard-banner p {
+        color: #E0E7FF;
+        font-size: 15px;
+        margin-bottom: 0;
+    }
+    .section-heading {
+        font-size: 21px;
+        font-weight: 700;
+        margin-top: 12px;
+        margin-bottom: 12px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-    st.write(
-        "Welcome to MeetIQ — your AI-powered meeting "
-        "intelligence dashboard."
-    )
+    # -------------------- WELCOME BANNER --------------------
+    st.markdown("""
+    <div class="dashboard-banner">
+        <h1>Welcome to MeetIQ 👋</h1>
+        <p>
+            Your intelligent workspace for meeting transcripts,
+            decisions, action items, and AI-powered insights.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # --------------------------------------------------------
-    # LOAD MEETINGS
-    # --------------------------------------------------------
-
+    # -------------------- LOAD MEETING DATA --------------------
     try:
-
         meetings = get_meeting_history()
-
+        if meetings is None:
+            meetings = []
     except Exception as error:
-
         meetings = []
+        st.error(f"Could not load meeting history: {error}")
 
-        st.error(
-            f"❌ Could not load meeting data: {error}"
-        )
-
-    # --------------------------------------------------------
-    # CALCULATE DASHBOARD METRICS
-    # --------------------------------------------------------
-    #
-    # get_meeting_history() returns summary/history records.
-    # The detailed action items, decisions and participants are
-    # loaded from get_full_meeting() so the dashboard shows the
-    # real stored values instead of always displaying zero.
-    # --------------------------------------------------------
-
+    # -------------------- CALCULATE METRICS --------------------
     total_meetings = len(meetings)
-
     total_action_items = 0
     total_decisions = 0
     total_participants = 0
 
     for meeting in meetings:
-
         meeting_id = meeting.get("id")
 
         if not meeting_id:
             continue
 
         try:
-
-            full_meeting = get_full_meeting(
-                int(meeting_id)
-            )
+            full_meeting = get_full_meeting(int(meeting_id))
 
             if not full_meeting:
                 continue
 
-            action_items = full_meeting.get(
-                "action_items",
-                []
-            )
+            actions = full_meeting.get("action_items") or []
+            decisions = full_meeting.get("decisions") or []
+            participants = full_meeting.get("participants") or []
 
-            decisions = full_meeting.get(
-                "decisions",
-                []
-            )
-
-            participants = full_meeting.get(
-                "participants",
-                []
-            )
-
-            if isinstance(action_items, list):
-                total_action_items += len(action_items)
+            if isinstance(actions, list):
+                total_action_items += len(actions)
 
             if isinstance(decisions, list):
                 total_decisions += len(decisions)
@@ -409,350 +610,188 @@ if selected_page == "🏠 Dashboard":
                 total_participants += len(participants)
 
         except Exception:
-            # One damaged/missing meeting should not break
-            # the entire dashboard.
             continue
 
-    # --------------------------------------------------------
-    # SUMMARY CARDS
-    # --------------------------------------------------------
+    # -------------------- METRIC CARDS --------------------
+    st.markdown(
+        '<div class="section-heading">📈 Meeting Overview</div>',
+        unsafe_allow_html=True
+    )
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-
-        st.metric(
-            "📚 Total Meetings",
-            total_meetings
-        )
+        st.metric("📚 Total Meetings", total_meetings)
 
     with col2:
-
-        st.metric(
-            "📌 Action Items",
-            total_action_items
-        )
+        st.metric("📌 Action Items", total_action_items)
 
     with col3:
-
-        st.metric(
-            "✅ Decisions",
-            total_decisions
-        )
+        st.metric("✅ Decisions", total_decisions)
 
     with col4:
-
-        st.metric(
-            "👥 Participants",
-            total_participants
-        )
+        st.metric("👥 Participants", total_participants)
 
     st.divider()
 
-    # --------------------------------------------------------
-    # BACKEND STATUS
-    # --------------------------------------------------------
-
-    st.subheader("⚙️ System Status")
+    # -------------------- SYSTEM STATUS --------------------
+    st.markdown(
+        '<div class="section-heading">⚙️ System Status</div>',
+        unsafe_allow_html=True
+    )
 
     status_col1, status_col2 = st.columns(2)
 
     with status_col1:
-
         if backend_available:
-
-            st.success(
-                "🟢 AI Backend Connected"
-            )
-
+            st.success("🟢 AI Backend Connected")
         else:
-
-            st.error(
-                "🔴 AI Backend Offline"
-            )
+            st.error("🔴 AI Backend Offline")
 
     with status_col2:
-
-        st.info(
-            f"📊 {total_meetings} meetings available"
-        )
+        st.info(f"📊 {total_meetings} meetings stored in history")
 
     st.divider()
 
-    # --------------------------------------------------------
-    # RECENT MEETINGS
-    # --------------------------------------------------------
-
-    st.subheader("🕒 Recent Meetings")
+    # -------------------- RECENT MEETINGS --------------------
+    st.markdown(
+        '<div class="section-heading">🕒 Recent Meetings</div>',
+        unsafe_allow_html=True
+    )
 
     if not meetings:
-
-        st.info(
-            "No meetings are available yet."
-        )
+        st.info("No meetings available yet. Generate your first transcript to get started.")
 
     else:
-
-        # Meeting history is returned newest first
-        recent_meetings = meetings[:5]
-
-        for meeting in recent_meetings:
-
-            meeting_id = meeting.get(
-                "id",
-                "Unknown"
-            )
-
-            filename = meeting.get(
-                "filename",
-                "Unknown"
-            )
-
-            summary = meeting.get(
-                "summary",
-                "No summary available."
-            )
-
-            created_at = meeting.get(
-                "created_at",
-                "Unknown"
-            )
+        for meeting in meetings[:5]:
+            meeting_id = meeting.get("id", "Unknown")
+            filename = meeting.get("filename", "Unknown file")
+            summary = meeting.get("summary") or "No summary available."
+            created_at = meeting.get("created_at", "Unknown")
 
             with st.container(border=True):
-
-                col1, col2, col3 = st.columns(
-                    [1, 3, 2]
-                )
+                col1, col2 = st.columns([3, 1])
 
                 with col1:
-
-                    st.markdown(
-                        f"### Meeting #{meeting_id}"
-                    )
+                    st.markdown(f"**📄 Meeting #{meeting_id} — {filename}**")
+                    st.write(summary)
 
                 with col2:
-
-                    st.write(
-                        f"**File:** {filename}"
-                    )
-
-                    st.write(
-                        f"**Summary:** {summary}"
-                    )
-
-                with col3:
-
-                    st.write(
-                        f"**Created:** {created_at}"
-                    )
+                    st.caption("Created")
+                    st.write(str(created_at))
 
     st.divider()
 
-    # --------------------------------------------------------
-    # QUICK SEARCH
-    # --------------------------------------------------------
-
-    st.subheader("🔎 Search Meeting Knowledge")
-
-    dashboard_query = st.text_input(
-        "Search previous meetings",
-        placeholder=(
-            "Example: Which meeting discussed "
-            "database migration?"
-        ),
-        key="dashboard_search"
+    # -------------------- MEETING KNOWLEDGE SEARCH --------------------
+    st.markdown(
+        '<div class="section-heading">🔎 Search Meeting Knowledge</div>',
+        unsafe_allow_html=True
     )
 
-    if st.button(
-        "🔍 Search",
-        key="dashboard_search_button"
-    ):
+    with st.container(border=True):
+        dashboard_query = st.text_input(
+            "Search your previous meetings",
+            placeholder="Example: Which meeting discussed database migration?",
+            key="dashboard_search"
+        )
 
-        if not dashboard_query.strip():
+        if st.button("🔍 Search Meetings", key="dashboard_search_button"):
 
-            st.warning(
-                "Please enter a search query."
-            )
+            if not dashboard_query.strip():
+                st.warning("Please enter a search query.")
 
-        elif not backend_available:
+            elif not backend_available:
+                st.error("The AI backend is not available.")
 
-            st.error(
-                "❌ Backend is not available."
-            )
-
-        else:
-
-            try:
-
-                search_response = requests.post(
-                    f"{BACKEND_URL}/search",
-                    json={
-                        "query": dashboard_query,
-                        "top_k": 5
-                    },
-                    timeout=30
-                )
-
-                if search_response.status_code != 200:
-
-                    st.error(
-                        "❌ Search failed."
+            else:
+                try:
+                    search_response = requests.post(
+                        f"{BACKEND_URL}/search",
+                        json={"query": dashboard_query, "top_k": 5},
+                        timeout=30
                     )
 
-                else:
-
-                    search_data = (
-                        search_response
-                        .json()
-                    )
-
-                    results = search_data.get(
-                        "results",
-                        []
-                    )
-
-                    if not results:
-
-                        st.info(
-                            "No relevant meetings found."
-                        )
-
+                    if search_response.status_code != 200:
+                        st.error("Meeting search failed.")
                     else:
+                        results = search_response.json().get("results", [])
 
-                        st.success(
-                            f"Found {len(results)} "
-                            f"relevant result(s)."
-                        )
+                        if not results:
+                            st.info("No relevant meetings found.")
+                        else:
+                            st.success(f"Found {len(results)} result(s).")
 
-                        for result in results:
-
-                            st.markdown(
-                                f"**Meeting "
-                                f"#{result.get('meeting_id', 'Unknown')}**"
-                            )
-
-                            st.write(
-                                result.get(
-                                    "content",
-                                    "No content available."
+                            for result in results:
+                                st.markdown(
+                                    f"**Meeting #{result.get('meeting_id', 'Unknown')}**"
                                 )
-                            )
+                                st.write(
+                                    result.get("content", "No content available.")
+                                )
+                                st.caption(
+                                    f"Content type: {result.get('content_type', 'Unknown')}"
+                                )
+                                st.divider()
 
-                            st.caption(
-                                f"Content type: "
-                                f"{result.get('content_type', 'Unknown')}"
-                            )
+                except requests.exceptions.Timeout:
+                    st.error("Search timed out. Please try again.")
 
-                            st.divider()
+                except requests.exceptions.RequestException as error:
+                    st.error(f"Search request failed: {error}")
 
-            except requests.exceptions.Timeout:
+    st.divider()
 
-                st.error(
-                    "❌ Search request timed out."
-                )
-
-            except requests.exceptions.RequestException as error:
-
-                st.error(
-                    f"❌ Search request failed: {error}"
-                )
-
-    # --------------------------------------------------------
-    # AI ASSISTANT
-    # --------------------------------------------------------
-
-    st.subheader("🤖 AI Meeting Assistant")
-
-    dashboard_question = st.text_input(
-        "Ask a question about your meetings",
-        placeholder=(
-            "Example: Which meeting discussed "
-            "database migration?"
-        ),
-        key="dashboard_question"
+    # -------------------- AI MEETING ASSISTANT --------------------
+    st.markdown(
+        '<div class="section-heading">🤖 AI Meeting Assistant</div>',
+        unsafe_allow_html=True
     )
 
-    if st.button(
-        "🤖 Ask AI",
-        key="dashboard_ask_button"
-    ):
+    with st.container(border=True):
+        dashboard_question = st.text_input(
+            "Ask a question about your meetings",
+            placeholder="Example: What decisions were made in previous meetings?",
+            key="dashboard_question"
+        )
 
-        if not dashboard_question.strip():
+        if st.button("🤖 Ask MeetIQ AI", key="dashboard_ask_button"):
 
-            st.warning(
-                "Please enter a question."
-            )
+            if not dashboard_question.strip():
+                st.warning("Please enter a question.")
 
-        elif not backend_available:
+            elif not backend_available:
+                st.error("The AI backend is not available.")
 
-            st.error(
-                "❌ AI backend is not available."
-            )
-
-        else:
-
-            try:
-
-                rag_response = requests.post(
-                    f"{BACKEND_URL}/rag-question",
-                    json={
-                        "question": dashboard_question
-                    },
-                    timeout=120
-                )
-
-                if rag_response.status_code != 200:
-
-                    st.error(
-                        "❌ AI assistant request failed."
+            else:
+                try:
+                    rag_response = requests.post(
+                        f"{BACKEND_URL}/rag-question",
+                        json={"question": dashboard_question},
+                        timeout=120
                     )
 
-                else:
+                    if rag_response.status_code != 200:
+                        st.error("The AI assistant request failed.")
+                    else:
+                        rag_data = rag_response.json().get("data", {})
+                        answer = rag_data.get("answer", "No answer available.")
+                        sources = rag_data.get("sources", [])
 
-                    rag_data = (
-                        rag_response
-                        .json()
-                        .get("data", {})
-                    )
+                        st.success("🤖 AI Answer")
+                        st.write(answer)
 
-                    answer = rag_data.get(
-                        "answer",
-                        "No answer available."
-                    )
+                        if sources:
+                            st.markdown("**Sources**")
+                            for source in sources:
+                                st.markdown(
+                                    f"- Meeting #{source.get('meeting_id', 'Unknown')}"
+                                )
 
-                    sources = rag_data.get(
-                        "sources",
-                        []
-                    )
+                except requests.exceptions.Timeout:
+                    st.error("The AI assistant timed out. Please try again.")
 
-                    st.success("🤖 AI Answer")
-
-                    st.write(answer)
-
-                    if sources:
-
-                        st.write(
-                            "**Sources:**"
-                        )
-
-                        for source in sources:
-
-                            st.markdown(
-                                f"- Meeting "
-                                f"#{source.get('meeting_id', 'Unknown')}"
-                            )
-
-            except requests.exceptions.Timeout:
-
-                st.error(
-                    "❌ AI assistant request timed out."
-                )
-
-            except requests.exceptions.RequestException as error:
-
-                st.error(
-                    f"❌ AI assistant request failed: {error}"
-                )
+                except requests.exceptions.RequestException as error:
+                    st.error(f"AI assistant request failed: {error}")
 # ============================================================
 # 1.5 MEETING DETAILS & ANALYTICS
 # ============================================================
@@ -1245,105 +1284,151 @@ elif selected_page == "📊 Meeting Details & Analytics":
                 )
 
             st.divider()
-
-            # ------------------------------------------------
-            # ANALYTICS
-            # ------------------------------------------------
-
-            st.subheader(
-                "📊 Meeting Analytics"
-            )
-
             total_key_points = len(
-                key_points
-                if isinstance(key_points, list)
-                else []
+                key_points if isinstance(key_points, list) else []
             )
-
             total_decisions = len(
-                decisions
-                if isinstance(decisions, list)
-                else []
+                decisions if isinstance(decisions, list) else []
             )
-
             total_action_items = len(
-                action_items
-                if isinstance(action_items, list)
-                else []
+                action_items if isinstance(action_items, list) else []
             )
-
             total_participants = len(
-                participants
-                if isinstance(participants, list)
-                else []
+                participants if isinstance(participants, list) else []
             )
-
             total_deadlines = len(
-                deadlines
-                if isinstance(deadlines, list)
-                else []
+                deadlines if isinstance(deadlines, list) else []
             )
-
             total_priorities = len(
-                priorities
-                if isinstance(priorities, list)
-                else []
+                priorities if isinstance(priorities, list) else []
+            )
+        # ------------------------------------------------
+            # PROFESSIONAL MEETING ANALYTICS DASHBOARD
+            # ------------------------------------------------
+            import pandas as pd
+
+            st.subheader("📊 Meeting Analytics")
+            st.caption(
+                "Overview of the selected meeting's intelligence"
             )
 
-            a1, a2, a3 = st.columns(3)
+            # METRIC CARDS
+            m1, m2, m3, m4 = st.columns(4)
 
-            with a1:
+            with m1:
+                with st.container(border=True):
+                    st.caption("🔑 Key Points")
+                    st.metric("Total", total_key_points)
 
-                st.metric(
-                    "🔑 Key Points",
-                    total_key_points
+            with m2:
+                with st.container(border=True):
+                    st.caption("✅ Decisions")
+                    st.metric("Total", total_decisions)
+
+            with m3:
+                with st.container(border=True):
+                    st.caption("📌 Action Items")
+                    st.metric("Total", total_action_items)
+
+            with m4:
+                with st.container(border=True):
+                    st.caption("👥 Participants")
+                    st.metric("Total", total_participants)
+
+            st.markdown("### 📈 Meeting Insights")
+
+            # DATA FOR OVERVIEW CHART
+            overview_df = pd.DataFrame({
+                "Category": [
+                    "Key Points",
+                    "Decisions",
+                    "Action Items",
+                    "Participants",
+                    "Deadlines",
+                    "Priorities",
+                ],
+                "Count": [
+                    total_key_points,
+                    total_decisions,
+                    total_action_items,
+                    total_participants,
+                    total_deadlines,
+                    total_priorities,
+                ],
+            })
+
+            # ACTION ITEM STATUS COUNTS
+            status_counts = {
+                "Pending": 0,
+                "In Progress": 0,
+                "Completed": 0,
+            }
+
+            for item in action_items:
+                if not isinstance(item, dict):
+                    continue
+
+                status = str(
+                    item.get("status") or "Pending"
+                ).strip().lower()
+
+                if status in ("completed", "complete", "done"):
+                    status_counts["Completed"] += 1
+                elif status in (
+                    "in progress",
+                    "in-progress",
+                    "ongoing",
+                ):
+                    status_counts["In Progress"] += 1
+                else:
+                    status_counts["Pending"] += 1
+
+            chart1, chart2 = st.columns(2)
+
+            with chart1:
+                with st.container(border=True):
+                    st.markdown("#### Meeting Overview")
+                    st.bar_chart(
+                        overview_df.set_index("Category")["Count"],
+                        height=300,
+                    )
+
+            with chart2:
+                with st.container(border=True):
+                    st.markdown("#### Action Item Status")
+
+                    status_df = pd.DataFrame({
+                        "Status": list(status_counts.keys()),
+                        "Tasks": list(status_counts.values()),
+                    })
+
+                    st.bar_chart(
+                        status_df.set_index("Status"),
+                        height=300,
+                    )
+
+            # OVERVIEW TABLE
+            st.markdown("### 📋 Meeting Overview")
+
+            with st.container(border=True):
+                st.dataframe(
+                    overview_df.rename(columns={
+                        "Category": "Metric",
+                        "Count": "Value",
+                    }),
+                    hide_index=True,
+                    use_container_width=True,
                 )
 
-            with a2:
+           
 
-                st.metric(
-                    "✅ Decisions",
-                    total_decisions
-                )
-
-            with a3:
-
-                st.metric(
-                    "📌 Action Items",
-                    total_action_items
-                )
-
-            a4, a5, a6 = st.columns(3)
-
-            with a4:
-
-                st.metric(
-                    "👥 Participants",
-                    total_participants
-                )
-
-            with a5:
-
-                st.metric(
-                    "📅 Deadlines",
-                    total_deadlines
-                )
-
-            with a6:
-
-                st.metric(
-                    "🔥 Priorities",
-                    total_priorities
-                )
 # ============================================================
 # 1. GENERATE TRANSCRIPT
 # ============================================================
 
 if selected_page == "🎙️ Generate Transcript":
 
-    st.header(
-        "1. Generate Transcript"
-    )
+    st.header("1. Generate Transcript")
 
     st.write(
         "Upload an audio or video meeting recording "
@@ -1364,35 +1449,22 @@ if selected_page == "🎙️ Generate Transcript":
 
     if uploaded_file is not None:
 
-        extension = (
-            uploaded_file.name
-            .split(".")[-1]
-            .lower()
-        )
-
-        size_mb = (
-            uploaded_file.size
-            / (1024 * 1024)
-        )
+        extension = uploaded_file.name.split(".")[-1].lower()
+        size_mb = uploaded_file.size / (1024 * 1024)
 
         if size_mb > MAX_FILE_SIZE_MB:
-
             st.error(
-                f"❌ File is too large. "
-                f"Maximum allowed size is "
+                f"❌ File is too large. Maximum allowed size is "
                 f"{MAX_FILE_SIZE_MB} MB."
             )
-
             st.stop()
 
-        # New recording clears previous meeting results.
+        # Clear previous results when a different recording is uploaded.
         if (
             st.session_state["transcript_filename"]
-            and
-            st.session_state["transcript_filename"]
+            and st.session_state["transcript_filename"]
             != uploaded_file.name
         ):
-
             st.session_state["transcript"] = ""
             st.session_state["transcript_filename"] = ""
             st.session_state["meeting_data"] = {}
@@ -1403,43 +1475,23 @@ if selected_page == "🎙️ Generate Transcript":
         col1, col2, col3 = st.columns(3)
 
         with col1:
-
-            st.write(
-                "**File:**",
-                uploaded_file.name
-            )
+            st.write("**File:**", uploaded_file.name)
 
         with col2:
-
-            st.write(
-                "**Size:**",
-                f"{size_mb:.2f} MB"
-            )
+            st.write("**Size:**", f"{size_mb:.2f} MB")
 
         with col3:
-
-            st.write(
-                "**Type:**",
-                extension.upper()
-            )
+            st.write("**Type:**", extension.upper())
 
         file_path = os.path.join(
             UPLOAD_FOLDER,
             uploaded_file.name
         )
 
-        with open(
-            file_path,
-            "wb"
-        ) as file:
+        with open(file_path, "wb") as file:
+            file.write(uploaded_file.getbuffer())
 
-            file.write(
-                uploaded_file.getbuffer()
-            )
-
-        st.success(
-            "📁 File uploaded successfully!"
-        )
+        st.success("📁 File uploaded successfully!")
 
         if st.button(
             "🎙️ Generate Transcript",
@@ -1448,59 +1500,34 @@ if selected_page == "🎙️ Generate Transcript":
         ):
 
             try:
-
-                with st.spinner(
-                    "🔄 Loading Whisper model..."
-                ):
-
+                # Step 1: Load Whisper.
+                with st.spinner("🔄 Loading Whisper model..."):
                     model = load_whisper_model()
 
+                # Step 2: Generate transcript.
                 with st.spinner(
                     "🎧 Processing recording and generating transcript..."
                 ):
-
                     result = model.transcribe(
                         file_path,
                         fp16=False
                     )
 
-                transcript = (
-                    result["text"]
-                    .strip()
-                )
+                transcript = result["text"].strip()
 
                 if not transcript:
-
-                    st.error(
-                        "❌ Transcript is empty."
-                    )
-
+                    st.error("❌ Transcript is empty.")
                     st.stop()
 
-                st.session_state[
-                    "transcript"
-                ] = transcript
+                # Step 3: Store transcript in session state.
+                st.session_state["transcript"] = transcript
+                st.session_state["transcript_filename"] = uploaded_file.name
+                st.session_state["meeting_data"] = {}
+                st.session_state["meeting_id"] = None
+                st.session_state["analysis_done"] = False
+                st.session_state["accuracy_result"] = None
 
-                st.session_state[
-                    "transcript_filename"
-                ] = uploaded_file.name
-
-                st.session_state[
-                    "meeting_data"
-                ] = {}
-
-                st.session_state[
-                    "meeting_id"
-                ] = None
-
-                st.session_state[
-                    "analysis_done"
-                ] = False
-
-                st.session_state[
-                    "accuracy_result"
-                ] = None
-
+                # Step 4: Save transcript as a text file.
                 base_name = os.path.splitext(
                     uploaded_file.name
                 )[0]
@@ -1515,30 +1542,52 @@ if selected_page == "🎙️ Generate Transcript":
                     "w",
                     encoding="utf-8"
                 ) as file:
+                    file.write(transcript)
 
-                    file.write(
-                        transcript
+                st.success("✅ Transcript generated successfully!")
+
+                # Step 5: Analyze transcript using the LLM.
+                with st.spinner("🤖 Analyzing meeting transcript..."):
+                    meeting_result = process_transcript(transcript)
+
+                # Step 6: Convert the validated result to a dictionary.
+                if hasattr(meeting_result, "model_dump"):
+                    meeting_result = meeting_result.model_dump()
+                elif hasattr(meeting_result, "dict"):
+                    meeting_result = meeting_result.dict()
+
+                # Step 7: Save the meeting and AI analysis to SQLite.
+                with st.spinner("💾 Saving meeting to database..."):
+                    meeting_id = save_meeting(
+                        intelligence=meeting_result,
+                        transcript=transcript,
+                        filename=uploaded_file.name
                     )
 
+                # Step 8: Store the results and database ID.
+                st.session_state["meeting_data"] = meeting_result
+                st.session_state["meeting_id"] = meeting_id
+                st.session_state["analysis_done"] = True
+
+                st.success("✅ Meeting analysis generated successfully!")
                 st.success(
-                    "✅ Transcript generated successfully!"
+                    f"💾 Meeting saved to database. "
+                    f"Meeting ID: {meeting_id}"
                 )
 
             except Exception as error:
-
                 st.error(
-                    f"❌ Transcription failed: {error}"
+                    f"❌ Processing or database saving failed: {error}"
                 )
 
+    # ============================================================
+    # DISPLAY GENERATED TRANSCRIPT
+    # ============================================================
 
-    # Show generated transcript only on this page.
     if st.session_state["transcript"]:
 
         st.divider()
-
-        st.subheader(
-            "📄 Generated Text"
-        )
+        st.subheader("📄 Generated Text")
 
         st.text_area(
             "Whisper Generated Transcript",
@@ -1547,22 +1596,86 @@ if selected_page == "🎙️ Generate Transcript":
         )
 
         base_name = os.path.splitext(
-            st.session_state[
-                "transcript_filename"
-            ]
+            st.session_state["transcript_filename"]
         )[0]
 
         st.download_button(
             "📥 Download Transcript",
             st.session_state["transcript"],
-            file_name=(
-                f"{base_name}_transcript.txt"
-            ),
+            file_name=f"{base_name}_transcript.txt",
             mime="text/plain",
             use_container_width=True
         )
 
+        # ========================================================
+        # DISPLAY MEETING INTELLIGENCE
+        # ========================================================
 
+        if st.session_state.get("analysis_done", False):
+
+            meeting_data = st.session_state.get("meeting_data", {})
+
+            st.divider()
+            st.subheader("🤖 Meeting Intelligence")
+
+            st.markdown("### 📝 Summary")
+            st.write(
+                meeting_data.get("summary")
+                or "No summary available."
+            )
+
+            st.markdown("### 🔑 Key Points")
+            for point in meeting_data.get("key_points") or []:
+                st.markdown(f"- {point}")
+
+            st.markdown("### ✅ Decisions")
+            for decision in meeting_data.get("decisions") or []:
+                st.markdown(f"- {decision}")
+
+            st.markdown("### 📌 Action Items")
+
+            for item in meeting_data.get("action_items") or []:
+
+                if isinstance(item, dict):
+                    st.markdown(
+                        f"**Task:** {item.get('task') or 'Not specified'}"
+                    )
+                    st.write(
+                        f"Assigned to: {item.get('assigned_to') or 'Not specified'}"
+                    )
+                    st.write(
+                        f"Deadline: {item.get('deadline') or 'Not specified'}"
+                    )
+                    st.write(
+                        f"Priority: {item.get('priority') or 'Not specified'}"
+                    )
+                    st.write(
+                        f"Status: {item.get('status') or 'Pending'}"
+                    )
+                    st.divider()
+                else:
+                    st.markdown(f"- {item}")
+
+            st.markdown("### 👥 Participants")
+
+            for person in meeting_data.get("participants") or []:
+
+                if isinstance(person, dict):
+                    st.markdown(
+                        f"- **{person.get('name') or 'Not specified'}**"
+                    )
+                else:
+                    st.markdown(f"- {person}")
+
+            st.markdown("### 📅 Deadlines")
+
+            for deadline in meeting_data.get("deadlines") or []:
+                st.markdown(f"- {deadline}")
+
+            st.markdown("### 🎯 Priorities")
+
+            for priority in meeting_data.get("priorities") or []:
+                st.markdown(f"- {priority}")
 # ============================================================
 # 2. MEETING INTELLIGENCE
 # ============================================================
@@ -1884,11 +1997,11 @@ elif selected_page == (
         else:
 
             for participant in participants:
+                
+                name = participant.get("name")
 
-                name = participant.get(
-                    "name",
-                    "Unknown"
-                )
+                if not name or str(name).strip().lower() in ("null", "none", ""):
+                    name = "Unknown Participant"
 
                 role = participant.get(
                     "role"
@@ -2970,147 +3083,110 @@ elif selected_page == "🔎 Knowledge Search":
                     st.error(
                         f"❌ Unexpected error: {error}"
                     )
+
 # ============================================================
 # 10. ZOOM INTEGRATION
 # ============================================================
-
 elif selected_page == "🎥 Zoom Integration":
 
     st.header("🎥 Zoom Integration")
+    st.write("Select a local meeting recording and generate its transcript.")
 
-    st.write(
-        "Retrieve a transcript from Zoom using a valid Zoom "
-        "meeting ID."
-    )
-
-    st.info(
-        "ℹ️ Your Zoom Server-to-Server OAuth app must have the "
-        "required transcript permission. A real Zoom meeting ID "
-        "with an available transcript is required."
-    )
-
-    zoom_meeting_id = st.text_input(
-        "Zoom Meeting ID",
-        placeholder="Enter your Zoom Meeting ID",
-        key="zoom_meeting_id"
-    )
-
-    if st.button(
-        "🎥 Get Zoom Transcript",
-        type="primary",
-        use_container_width=True,
-        key="zoom_transcript_button"
-    ):
-
-        if not zoom_meeting_id.strip():
-
-            st.warning(
-                "⚠️ Please enter a Zoom Meeting ID."
+    # Find recordings already saved in the uploads folder
+    if not os.path.isdir(UPLOAD_FOLDER):
+        st.error("Uploads folder was not found.")
+    else:
+        recording_files = sorted([
+            filename
+            for filename in os.listdir(UPLOAD_FOLDER)
+            if os.path.isfile(os.path.join(UPLOAD_FOLDER, filename))
+            and filename.lower().endswith(
+                (".mp3", ".wav", ".m4a", ".aac", ".flac",
+                 ".mp4", ".mov", ".avi", ".mkv")
             )
+        ])
 
-        elif not backend_available:
-
-            st.error(
-                "❌ AI backend is not available."
-            )
-
+        if not recording_files:
+            st.warning("No local recordings found in the uploads folder.")
+            st.info("Upload a recording first in Generate Transcript.")
         else:
+            selected_recording = st.selectbox(
+                "Choose a meeting recording",
+                recording_files,
+                key="zoom_local_recording"
+            )
 
-            try:
+            file_path = os.path.join(UPLOAD_FOLDER, selected_recording)
 
-                with st.spinner(
-                    "🔄 Retrieving Zoom transcript..."
-                ):
+            if st.button(
+                "🎙️ Generate Transcript from Recording",
+                type="primary",
+                key="zoom_local_transcribe"
+            ):
+                try:
+                    with st.spinner("Loading Whisper model..."):
+                        model = load_whisper_model()
 
-                    response = requests.post(
-                        f"{BACKEND_URL}/zoom-transcript",
-                        json={
-                            "meeting_id":
-                                zoom_meeting_id.strip()
-                        },
-                        timeout=60
-                    )
+                    with st.spinner("Transcribing meeting recording..."):
+                        result = model.transcribe(file_path, fp16=False)
 
-                if response.status_code == 200:
+                    transcript = result["text"].strip()
 
-                    result = response.json()
-
-                    st.success(
-                        "✅ Zoom transcript retrieved successfully."
-                    )
-
-                    transcript_data = result.get(
-                        "transcript",
-                        ""
-                    )
-
-                    st.subheader("📄 Zoom Transcript")
-
-                    if isinstance(
-                        transcript_data,
-                        dict
-                    ):
-
-                        st.json(
-                            transcript_data
-                        )
-
-                    elif transcript_data:
-
-                        st.text_area(
-                            "Transcript",
-                            value=str(
-                                transcript_data
-                            ),
-                            height=400
-                        )
-
+                    if not transcript:
+                        st.warning("No speech was detected in this recording.")
                     else:
+                        st.session_state["transcript"] = transcript
+                        st.session_state["transcript_filename"] = selected_recording
+                        st.session_state["meeting_data"] = {}
+                        st.session_state["meeting_id"] = None
+                        st.session_state["analysis_done"] = False
+                        st.session_state["accuracy_result"] = None
 
-                        st.info(
-                            "The Zoom API returned no transcript "
-                            "content."
+                        
+                    # Run AI meeting analysis
+                    with st.spinner("Analyzing meeting with AI..."):
+                        meeting_result = process_transcript(transcript)
+
+                    # Convert result to a dictionary
+                    if hasattr(meeting_result, "model_dump"):
+                        meeting_result = meeting_result.model_dump()
+                    elif hasattr(meeting_result, "dict"):
+                        meeting_result = meeting_result.dict()
+
+                    # Save meeting to database
+                    with st.spinner("Saving meeting to database..."):
+                        meeting_id = save_meeting(
+                            intelligence=meeting_result,
+                            transcript=transcript,
+                            filename=selected_recording
                         )
 
-                else:
+                    st.session_state["transcript"] = transcript
+                    st.session_state["transcript_filename"] = selected_recording
+                    st.session_state["meeting_data"] = meeting_result
+                    st.session_state["meeting_id"] = meeting_id
+                    st.session_state["analysis_done"] = True
+                    st.session_state["accuracy_result"] = None
 
-                    try:
+                    st.success("Transcript and meeting analysis generated successfully!")
+                    st.success(f"Meeting saved to database. Meeting ID: {meeting_id}")
 
-                        error_detail = response.json().get(
-                            "detail",
-                            "Unknown Zoom API error."
-                        )
-
-                    except Exception:
-
-                        error_detail = response.text
-
-                    st.error(
-                        f"❌ Zoom request failed: "
-                        f"{error_detail}"
+                    st.subheader("Meeting Transcript")
+                    st.text_area(
+                        "Transcript",
+                        value=transcript,
+                        height=350,
+                        key="zoom_generated_transcript"
                     )
 
-            except requests.exceptions.Timeout:
+                    st.subheader("Meeting Intelligence")
+                    st.json(meeting_result)
 
-                st.error(
-                    "⏱️ Zoom request timed out. "
-                    "Please try again."
-                )
-
-            except requests.exceptions.ConnectionError:
-
-                st.error(
-                    "🔌 Could not connect to the MeetIQ backend."
-                )
-
-            except requests.exceptions.RequestException as error:
-
-                st.error(
-                    f"❌ Zoom request failed: {error}"
-                )
-
-            except Exception as error:
-
-                st.error(
-                    f"❌ Unexpected error: {error}"
-                )
+                    st.download_button(
+                        "Download Transcript",
+                        data=transcript,
+                        file_name=f"{os.path.splitext(selected_recording)[0]}_transcript.txt",
+                        mime="text/plain"
+                    )
+                except Exception as error:
+                    st.error(f"Could not transcribe recording: {error}")

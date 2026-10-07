@@ -50,3 +50,15 @@ venv/
 # Python cache files
 __pycache__/
 *.py[cod]
+# Database files
+*.db
+
+# Chroma vector databases
+vector_database/
+vector_database_backup/
+
+# Node.js dependencies
+meetig-video/node_modules/
+
+# Build files
+meetig-video/dist/

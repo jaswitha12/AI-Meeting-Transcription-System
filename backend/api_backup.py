@@ -44,11 +44,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:5175",
-    "http://127.0.0.1:5175",
-],
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -821,58 +819,4 @@ def transcribe_upload(file: UploadFile = File(...)):
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
         file.file.close()
-@app.post("/transcription-accuracy")
-def transcription_accuracy(payload: dict):
-    reference = str(payload.get("reference", "")).strip()
-    hypothesis = str(payload.get("hypothesis", "")).strip()
-
-    if not reference:
-        raise HTTPException(
-            status_code=400,
-            detail="Reference transcript is required.",
-        )
-
-    if not hypothesis:
-        raise HTTPException(
-            status_code=400,
-            detail="Generated transcript is required.",
-        )
-
-    reference_words = reference.lower().split()
-    hypothesis_words = hypothesis.lower().split()
-
-    rows = len(reference_words) + 1
-    cols = len(hypothesis_words) + 1
-
-    distance = [
-        [0] * cols
-        for _ in range(rows)
-    ]
-
-    for i in range(rows):
-        distance[i][0] = i
-
-    for j in range(cols):
-        distance[0][j] = j
-
-    for i in range(1, rows):
-        for j in range(1, cols):
-            if reference_words[i - 1] == hypothesis_words[j - 1]:
-                distance[i][j] = distance[i - 1][j - 1]
-            else:
-                distance[i][j] = min(
-                    distance[i - 1][j] + 1,
-                    distance[i][j - 1] + 1,
-                    distance[i - 1][j - 1] + 1,
-                )
-
-    word_error_rate = distance[-1][-1] / len(reference_words)
-    accuracy = max(0.0, (1 - word_error_rate) * 100)
-
-    return {
-        "success": True,
-        "accuracy": round(accuracy, 2),
-        "word_error_rate": round(word_error_rate, 4),
-        "reference_word_count": len(reference_words),
-        "generated_word_count": len(hypothesis_words),
-    }
+        
